@@ -19,12 +19,20 @@ interface Zone {
   end: Position;
 }
 
+interface Arrow {
+  id: string;
+  start: Position;
+  end: Position;
+  type: 'running' | 'passing' | 'shooting';
+}
+
 interface SavedState {
   name: string;
   state: {
     tokens: Token[];
     ball: Position;
     zones: Zone[];
+    arrows: Arrow[];
   };
 }
 
@@ -32,6 +40,7 @@ interface HistoryState {
   tokens: Token[];
   ball: Position;
   zones: Zone[];
+  arrows: Arrow[];
 }
 
 // Initial formation configuration
@@ -62,6 +71,27 @@ const getInitialTokens = (): Token[] => [
   { id: 'a11', position: { x: 50, y: 65 }, team: 'away' }, // Striker
 ];
 
+const getArrowStyle = (type: 'running' | 'passing' | 'shooting') => {
+  switch (type) {
+    case 'running':
+      return {
+        strokeDasharray: '5,5',
+        markerEnd: 'url(#arrowhead)',
+      };
+    case 'passing':
+      return {
+        strokeDasharray: '0',
+        markerEnd: 'url(#arrowhead)',
+      };
+    case 'shooting':
+      return {
+        strokeDasharray: '10,5',
+        markerEnd: 'url(#arrowhead)',
+        stroke: '#ff4444',
+      };
+  }
+};
+
 function App() {
   const [tokens, setTokens] = useState<Token[]>(getInitialTokens());
   const [ball, setBall] = useState<Position>({ x: 50, y: 50 });
@@ -77,6 +107,10 @@ function App() {
   const [currentZone, setCurrentZone] = useState<Partial<Zone> | null>(null);
   const [isDrawingFirstPoint, setIsDrawingFirstPoint] = useState(false);
   const [history, setHistory] = useState<HistoryState[]>([]);
+  const [arrows, setArrows] = useState<Arrow[]>([]);
+  const [currentArrow, setCurrentArrow] = useState<Partial<Arrow> | null>(null);
+  const [selectedArrowType, setSelectedArrowType] = useState<'running' | 'passing' | 'shooting'>('running');
+  const [isDrawingArrow, setIsDrawingArrow] = useState(false);
   const boardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -87,7 +121,7 @@ function App() {
   }, []);
 
   const saveToHistory = () => {
-    setHistory(prev => [...prev, { tokens, ball, zones }]);
+    setHistory(prev => [...prev, { tokens, ball, zones, arrows }]);
   };
 
   const handleUndo = () => {
@@ -96,6 +130,7 @@ function App() {
       setTokens(previousState.tokens);
       setBall(previousState.ball);
       setZones(previousState.zones);
+      setArrows(previousState.arrows);
       setHistory(prev => prev.slice(0, -1));
     }
   };
@@ -105,23 +140,40 @@ function App() {
   };
 
   const handleBoardClick = (e: React.MouseEvent) => {
-    if (!isDrawingZone) return;
-
     if (!boardRef.current) return;
     const rect = boardRef.current.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
 
-    if (!isDrawingFirstPoint) {
-      setCurrentZone({ id: crypto.randomUUID(), start: { x, y } });
-      setIsDrawingFirstPoint(true);
-    } else {
-      if (currentZone?.start) {
-        const newZone = { ...currentZone, end: { x, y } } as Zone;
+    if (isDrawingZone) {
+      if (!isDrawingFirstPoint) {
+        setCurrentZone({ id: crypto.randomUUID(), start: { x, y } });
+        setIsDrawingFirstPoint(true);
+      } else {
+        if (currentZone?.start) {
+          const newZone = { ...currentZone, end: { x, y } } as Zone;
+          saveToHistory();
+          setZones([...zones, newZone]);
+          setCurrentZone(null);
+          setIsDrawingFirstPoint(false);
+        }
+      }
+    } else if (isDrawingArrow) {
+      if (!currentArrow?.start) {
+        setCurrentArrow({
+          id: crypto.randomUUID(),
+          start: { x, y },
+          type: selectedArrowType
+        });
+      } else {
+        const newArrow = {
+          ...currentArrow,
+          end: { x, y },
+          type: selectedArrowType
+        } as Arrow;
         saveToHistory();
-        setZones([...zones, newZone]);
-        setCurrentZone(null);
-        setIsDrawingFirstPoint(false);
+        setArrows([...arrows, newArrow]);
+        setCurrentArrow(null);
       }
     }
   };
@@ -148,16 +200,20 @@ function App() {
     if (isDrawingZone && isDrawingFirstPoint && currentZone?.start) {
       setCurrentZone(prev => prev ? { ...prev, end: { x, y } } : null);
     }
+
+    if (isDrawingArrow && currentArrow?.start) {
+      setCurrentArrow(prev => prev ? { ...prev, end: { x, y } } : null);
+    }
   };
 
   const handleMouseDown = (tokenId: string) => {
-    if (!isHighlightMode && !isDrawingZone) {
+    if (!isHighlightMode && !isDrawingZone && !isDrawingArrow) {
       setDraggingToken(tokenId);
     }
   };
 
   const handleBallMouseDown = () => {
-    if (!isHighlightMode && !isDrawingZone) {
+    if (!isHighlightMode && !isDrawingZone && !isDrawingArrow) {
       setIsDraggingBall(true);
     }
   };
@@ -175,11 +231,24 @@ function App() {
     setZones(zones.filter(zone => zone.id !== zoneId));
   };
 
+  const handleDeleteArrow = (arrowId: string) => {
+    saveToHistory();
+    setArrows(arrows.filter(arrow => arrow.id !== arrowId));
+  };
+
   const handleDrawingModeToggle = () => {
     setIsDrawingZone(!isDrawingZone);
     setIsHighlightMode(false);
+    setIsDrawingArrow(false);
     setCurrentZone(null);
     setIsDrawingFirstPoint(false);
+  };
+
+  const handleArrowModeToggle = () => {
+    setIsDrawingArrow(!isDrawingArrow);
+    setIsHighlightMode(false);
+    setIsDrawingZone(false);
+    setCurrentArrow(null);
   };
 
   const handleSaveState = () => {
@@ -190,7 +259,8 @@ function App() {
       state: {
         tokens,
         ball,
-        zones
+        zones,
+        arrows
       }
     };
 
@@ -206,6 +276,7 @@ function App() {
     setTokens(state.state.tokens);
     setBall(state.state.ball);
     setZones(state.state.zones);
+    setArrows(state.state.arrows);
     setLoadModalOpen(false);
   };
 
@@ -220,6 +291,7 @@ function App() {
     setTokens(getInitialTokens());
     setBall({ x: 50, y: 50 });
     setZones([]);
+    setArrows([]);
     clearHighlights();
   };
 
@@ -234,7 +306,9 @@ function App() {
               onClick={() => {
                 setIsHighlightMode(!isHighlightMode);
                 setIsDrawingZone(false);
+                setIsDrawingArrow(false);
                 setCurrentZone(null);
+                setCurrentArrow(null);
                 setIsDrawingFirstPoint(false);
                 if (!isHighlightMode) clearHighlights();
               }}
@@ -261,6 +335,50 @@ function App() {
                   : 'Draw Zone'}
               </span>
             </button>
+            <div className="space-y-2">
+              <button
+                onClick={handleArrowModeToggle}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors w-full
+                  ${isDrawingArrow
+                    ? 'bg-blue-600 hover:bg-blue-700'
+                    : 'bg-gray-600 hover:bg-gray-700'} text-white`}
+              >
+                <span className="whitespace-nowrap">
+                  {isDrawingArrow ? 'Drawing Arrow' : 'Draw Arrow'}
+                </span>
+              </button>
+              {isDrawingArrow && (
+                <div className="flex flex-col gap-1">
+                  <button
+                    onClick={() => setSelectedArrowType('running')}
+                    className={`px-4 py-2 rounded-lg transition-colors w-full
+                      ${selectedArrowType === 'running'
+                        ? 'bg-green-600 hover:bg-green-700'
+                        : 'bg-gray-600 hover:bg-gray-700'} text-white`}
+                  >
+                    Running
+                  </button>
+                  <button
+                    onClick={() => setSelectedArrowType('passing')}
+                    className={`px-4 py-2 rounded-lg transition-colors w-full
+                      ${selectedArrowType === 'passing'
+                        ? 'bg-blue-600 hover:bg-blue-700'
+                        : 'bg-gray-600 hover:bg-gray-700'} text-white`}
+                  >
+                    Passing
+                  </button>
+                  <button
+                    onClick={() => setSelectedArrowType('shooting')}
+                    className={`px-4 py-2 rounded-lg transition-colors w-full
+                      ${selectedArrowType === 'shooting'
+                        ? 'bg-red-600 hover:bg-red-700'
+                        : 'bg-gray-600 hover:bg-gray-700'} text-white`}
+                  >
+                    Shooting
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* State Controls */}
@@ -427,6 +545,52 @@ function App() {
             }}
           />
         )}
+
+        {/* SVG for arrows */}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none">
+          <defs>
+            <marker
+              id="arrowhead"
+              markerWidth="10"
+              markerHeight="7"
+              refX="9"
+              refY="3.5"
+              orient="auto"
+            >
+              <polygon points="0 0, 10 3.5, 0 7" fill="white" />
+            </marker>
+          </defs>
+          <g className="pointer-events-auto">
+            {arrows.map((arrow) => (
+              <line
+                key={arrow.id}
+                x1={`${arrow.start.x}%`}
+                y1={`${arrow.start.y}%`}
+                x2={`${arrow.end.x}%`}
+                y2={`${arrow.end.y}%`}
+                stroke={arrow.type === 'shooting' ? '#ff4444' : 'white'}
+                strokeWidth={arrow.type === 'shooting' ? 3 : 2}
+                style={{ ...getArrowStyle(arrow.type) }}
+                className="cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteArrow(arrow.id);
+                }}
+              />
+            ))}
+            {currentArrow?.start && currentArrow.end && (
+              <line
+                x1={`${currentArrow.start.x}%`}
+                y1={`${currentArrow.start.y}%`}
+                x2={`${currentArrow.end.x}%`}
+                y2={`${currentArrow.end.y}%`}
+                stroke={selectedArrowType === 'shooting' ? '#ff4444' : 'white'}
+                strokeWidth={selectedArrowType === 'shooting' ? 3 : 2}
+                style={{ ...getArrowStyle(selectedArrowType) }}
+              />
+            )}
+          </g>
+        </svg>
 
         {/* Players */}
         {tokens.map((token) => (
